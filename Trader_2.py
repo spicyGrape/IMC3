@@ -67,7 +67,7 @@ class Trader:
 
             prices = self.price_history[product]
 
-            # === RESIN 稳定套利策略 ===
+            # RESIN 稳定套利策略 
             if product == "RAINFOREST_RESIN":
                 fair_price = 10000
                 spread = 1
@@ -78,7 +78,7 @@ class Trader:
                 result[product] = orders
                 continue
 
-            # === SQUID RSI 策略 + 方向确认机制 ===
+            # SQUID RSI 策略 + 方向确认机制 
             if product == "SQUID_INK":
                 if len(prices) >= 10:
                     df = pd.DataFrame({"mid_price": prices})
@@ -106,7 +106,7 @@ class Trader:
                 result[product] = orders
                 continue
 
-            # === KELP 趋势确认策略（稳健版） ===
+            # KELP 趋势确认策略（稳健版） 
             if product == "KELP":
                 if len(prices) >= 10 and (current_time - self.kelp_last_trade_time >= KELP_COOLDOWN):
                     slope = linear_trend_slope(prices[-10:])
