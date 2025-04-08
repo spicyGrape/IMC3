@@ -1,7 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# 文件路径示例（替换成你自己的）
 price_files = {
     "day_-2": "prices_round_1_day_-2.csv",
     "day_-1": "prices_round_1_day_-1.csv",
@@ -14,7 +13,7 @@ trade_files = {
     "day_0": "trades_round_1_day_0.csv"
 }
 
-# 读取所有数据
+
 def load_data(price_paths, trade_paths):
     price_dfs = []
     trade_dfs = []
@@ -30,15 +29,15 @@ def load_data(price_paths, trade_paths):
 
 prices_all, trades_all = load_data(price_files, trade_files)
 
-# 可回测的商品列表
+
 products = prices_all["product"].unique()
 
-# 分别回测每个商品
+
 def backtest_product(product: str):
     df = prices_all[prices_all["product"] == product].sort_values(by=["day", "timestamp"])
     df = df.dropna(subset=["mid_price"])
 
-    # 简易回测策略：以WMA为基准判断
+    
     WMA_WINDOW = 5
     pnl = []
     price_buffer = []
@@ -71,7 +70,7 @@ def backtest_product(product: str):
     df["pnl"] = pnl
     return df
 
-# 可视化所有商品回测结果
+
 def plot_all():
     fig, axes = plt.subplots(len(products), 1, figsize=(14, 4 * len(products)), sharex=True)
     if len(products) == 1:
@@ -89,5 +88,5 @@ def plot_all():
     plt.tight_layout()
     plt.show()
 
-# 执行
+
 plot_all()
