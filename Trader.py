@@ -1,0 +1,232 @@
+from datamodel import Order, OrderDepth, Trade, TradingState
+from typing import List, Dict
+import json
+import math
+import numpy as np
+import pandas as pd
+
+POSITION_LIMIT = 20
+WMA_WINDOWS = {"SQUID_INK": 5, "KELP": 5}
+IDLE_THRESHOLD = 5
+MIN_VOLATILITY = 1.2
+MAX_ORDER_VOLUME = 10
+SLOPE_THRESHOLD = 0.15
+KELP_COOLDOWN = 5
+
+
+def safe_price(p):
+    return int(round(p))
+
+
+def compute_rsi(prices: pd.Series, window: int = 6) -> pd.Series:
+    delta = prices.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(window=window).mean()
+    avg_loss = loss.rolling(window=window).mean()
+    rs = avg_gain / (avg_loss + 1e-6)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+def linear_trend_slope(prices: list) -> float:
+    if len(prices) < 5:
+        return 0.0
+    x = np.arange(len(prices))
+    y = np.array(prices)
+    A = np.vstack([x, np.ones(len(x))]).T
+    slope, _ = np.linalg.lstsq(A, y, rcond=None)[0]
+    return slope
+
+
+class MarketData:
+    def __init__(self, order_depth: OrderDepth):
+        self.order_depth = order_depth
+        self.best_bid = max(order_depth.buy_orders.keys(), default=None)
+        self.best_ask = min(order_depth.sell_orders.keys(), default=None)
+        self.mid_price = (
+            (self.best_bid + self.best_ask) / 2
+            if self.best_bid and self.best_ask
+            else None
+        )
+
+
+class TradingStrategy:
+    def __init__(self, product, position_limit=20):
+        self.product = product
+        self.position_limit = position_limit
+        self.price_history = []
+
+    def update_price_history(self, mid_price):
+        if mid_price:
+            self.price_history.append(mid_price)
+            if len(self.price_history) > 30:  # Keep reasonable history
+                self.price_history = self.price_history[-30:]
+
+    def create_buy_order(self, price, market_data, current_position, max_volume=None):
+        """Helper method to create a buy order with position limit checks"""
+        if current_position >= self.position_limit:
+            return None
+
+        if max_volume is None:
+            max_volume = self.position_limit - current_position
+
+        return Order(
+            self.product,
+            safe_price(price),
+            min(max_volume, self.position_limit - current_position),
+        )
+
+    def create_sell_order(self, price, market_data, current_position, max_volume=None):
+        """Helper method to create a sell order with position limit checks"""
+        if current_position <= -self.position_limit:
+            return None
+
+        if max_volume is None:
+            max_volume = current_position + self.position_limit
+
+        return Order(
+            self.product,
+            safe_price(price),
+            -min(max_volume, current_position + self.position_limit),
+        )
+
+    def generate_orders(self, market_data, current_position, timestamp):
+        """To be implemented by subclasses"""
+        raise NotImplementedError
+
+
+class ResinStrategy(TradingStrategy):
+    def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
+        orders = []
+        fair_price = 10000
+        spread = 1
+
+        buy_order = self.create_buy_order(
+            fair_price - spread, market_data, current_position, 3
+        )
+        if buy_order:
+            orders.append(buy_order)
+
+        sell_order = self.create_sell_order(
+            fair_price + spread, market_data, current_position, 3
+        )
+        if sell_order:
+            orders.append(sell_order)
+
+        return orders
+
+
+class SquidInkStrategy(TradingStrategy):
+    def __init__(self, product, position_limit=POSITION_LIMIT):
+        super().__init__(product, position_limit)
+
+    def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
+        orders = []
+        prices = self.price_history
+
+        if len(prices) >= 10:
+            # Calculate indicators
+            df = pd.DataFrame({"mid_price": prices})
+            df["rsi"] = compute_rsi(df["mid_price"], window=6)
+            df["momentum"] = df["mid_price"].diff(3)
+            df = df.dropna()
+
+            if not df.empty:
+                latest = df.iloc[-1]
+                rsi = latest["rsi"]
+                momentum = latest["momentum"]
+                slope = linear_trend_slope(prices[-10:])
+
+                # Determine trading signal
+                signal = "HOLD"
+                if rsi < 40 and momentum > 0 and slope > 0:
+                    signal = "BUY"
+                elif rsi > 60 and momentum < 0 and slope < 0:
+                    signal = "SELL"
+
+                # Generate orders based on signal
+                if signal == "BUY" and market_data.best_ask:
+                    buy_order = self.create_buy_order(
+                        market_data.best_ask, market_data, current_position, 5
+                    )
+                    if buy_order:
+                        orders.append(buy_order)
+                elif signal == "SELL" and market_data.best_bid:
+                    sell_order = self.create_sell_order(
+                        market_data.best_bid, market_data, current_position, 5
+                    )
+                    if sell_order:
+                        orders.append(sell_order)
+
+        return orders
+
+
+class KelpStrategy(TradingStrategy):
+    def __init__(self, product, position_limit=POSITION_LIMIT):
+        super().__init__(product, position_limit)
+        self.last_trade_time = -KELP_COOLDOWN
+
+    def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
+        orders = []
+        prices = self.price_history
+
+        # Check if enough data and cooldown period has elapsed
+        if len(prices) >= 10 and (timestamp - self.last_trade_time >= KELP_COOLDOWN):
+            slope = linear_trend_slope(prices[-10:])
+            recent_volatility = np.std(prices[-5:])
+
+            # Check if conditions for trading are met
+            if abs(slope) > SLOPE_THRESHOLD and recent_volatility > MIN_VOLATILITY:
+                volume = 1
+
+                if slope > 0 and market_data.best_ask:  # BUY signal
+                    buy_order = self.create_buy_order(
+                        market_data.best_ask, market_data, current_position, volume
+                    )
+                    if buy_order:
+                        orders.append(buy_order)
+                        self.last_trade_time = timestamp
+
+                elif slope < 0 and market_data.best_bid:  # SELL signal
+                    sell_order = self.create_sell_order(
+                        market_data.best_bid, market_data, current_position, volume
+                    )
+                    if sell_order:
+                        orders.append(sell_order)
+                        self.last_trade_time = timestamp
+
+        return orders
+
+
+class Trader:
+    def __init__(self):
+        # Initialize strategies for each product
+        self.strategies = {
+            "RAINFOREST_RESIN": ResinStrategy("RAINFOREST_RESIN"),
+            "SQUID_INK": SquidInkStrategy("SQUID_INK"),
+            "KELP": KelpStrategy("KELP"),
+        }
+
+    def run(self, state: TradingState):
+        result = {}
+        conversions = 0
+
+        for product in state.order_depths:
+            if product in self.strategies:
+                order_depth = state.order_depths[product]
+                current_position = state.position.get(product, 0)
+
+                # Create market data object with all calculations done once
+                market_data = MarketData(order_depth)
+
+                # Update strategy with new price
+                self.strategies[product].update_price_history(market_data.mid_price)
+
+                # Generate orders using the appropriate strategy
+                orders = self.strategies[product].generate_orders(
+                    market_data, current_position, state.timestamp
+                )
+                result[product] = orders
+
+        return result, conversions, ""
