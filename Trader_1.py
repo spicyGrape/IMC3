@@ -6,10 +6,7 @@ import numpy as np
 import pandas as pd
 
 POSITION_LIMIT = 20
-WMA_WINDOWS = {
-    "SQUID_INK": 5,
-    "KELP": 5
-}
+WMA_WINDOWS = {"SQUID_INK": 5, "KELP": 5}
 IDLE_THRESHOLD = 5
 MIN_VOLATILITY = 1.2
 MAX_ORDER_VOLUME = 10
@@ -53,6 +50,8 @@ class Trader:
         current_time = state.timestamp
 
         for product in state.order_depths:
+            if product not in self.price_history:
+                continue
             order_depth = state.order_depths[product]
             orders: List[Order] = []
             current_position = state.position.get(product, 0)
@@ -67,18 +66,30 @@ class Trader:
 
             prices = self.price_history[product]
 
-            # RESIN 稳定套利策略 
+            # RESIN 稳定套利策略
             if product == "RAINFOREST_RESIN":
                 fair_price = 10000
                 spread = 1
                 if current_position < POSITION_LIMIT:
-                    orders.append(Order(product, fair_price - spread, min(3, POSITION_LIMIT - current_position)))
+                    orders.append(
+                        Order(
+                            product,
+                            fair_price - spread,
+                            min(3, POSITION_LIMIT - current_position),
+                        )
+                    )
                 if current_position > -POSITION_LIMIT:
-                    orders.append(Order(product, fair_price + spread, -min(3, current_position + POSITION_LIMIT)))
+                    orders.append(
+                        Order(
+                            product,
+                            fair_price + spread,
+                            -min(3, current_position + POSITION_LIMIT),
+                        )
+                    )
                 result[product] = orders
                 continue
 
-            # SQUID RSI 策略 + 方向确认机制 
+            # SQUID RSI 策略 + 方向确认机制
             if product == "SQUID_INK":
                 if len(prices) >= 10:
                     df = pd.DataFrame({"mid_price": prices})
@@ -99,27 +110,56 @@ class Trader:
                             signal = "SELL"
 
                         if signal == "BUY" and best_ask:
-                            orders.append(Order(product, safe_price(best_ask), min(5, POSITION_LIMIT - current_position)))
+                            orders.append(
+                                Order(
+                                    product,
+                                    safe_price(best_ask),
+                                    min(5, POSITION_LIMIT - current_position),
+                                )
+                            )
                         elif signal == "SELL" and best_bid:
-                            orders.append(Order(product, safe_price(best_bid), -min(5, current_position + POSITION_LIMIT)))
+                            orders.append(
+                                Order(
+                                    product,
+                                    safe_price(best_bid),
+                                    -min(5, current_position + POSITION_LIMIT),
+                                )
+                            )
 
                 result[product] = orders
                 continue
 
-            # KELP 趋势确认策略（稳健版） 
+            # KELP 趋势确认策略（稳健版）
             if product == "KELP":
-                if len(prices) >= 10 and (current_time - self.kelp_last_trade_time >= KELP_COOLDOWN):
+                if len(prices) >= 10 and (
+                    current_time - self.kelp_last_trade_time >= KELP_COOLDOWN
+                ):
                     slope = linear_trend_slope(prices[-10:])
                     recent_volatility = np.std(prices[-5:])
 
-                    if abs(slope) > SLOPE_THRESHOLD and recent_volatility > MIN_VOLATILITY:
+                    if (
+                        abs(slope) > SLOPE_THRESHOLD
+                        and recent_volatility > MIN_VOLATILITY
+                    ):
                         direction = "BUY" if slope > 0 else "SELL"
                         volume = 1
                         if direction == "BUY" and best_ask:
-                            orders.append(Order(product, safe_price(best_ask), min(volume, POSITION_LIMIT - current_position)))
+                            orders.append(
+                                Order(
+                                    product,
+                                    safe_price(best_ask),
+                                    min(volume, POSITION_LIMIT - current_position),
+                                )
+                            )
                             self.kelp_last_trade_time = current_time
                         elif direction == "SELL" and best_bid:
-                            orders.append(Order(product, safe_price(best_bid), -min(volume, current_position + POSITION_LIMIT)))
+                            orders.append(
+                                Order(
+                                    product,
+                                    safe_price(best_bid),
+                                    -min(volume, current_position + POSITION_LIMIT),
+                                )
+                            )
                             self.kelp_last_trade_time = current_time
 
                 result[product] = orders
