@@ -223,23 +223,119 @@ class KelpStrategy(TradingStrategy):
         return orders
 
 
+class PicnicBasket1Strategy(TradingStrategy):
+    PRICE_MARGIN_THRESHOLD = 200
+
+    def __init__(self, product, position_limit=60):
+        super().__init__(product, position_limit)
+
+    def generate_orders(self, market_data, current_position, timestamp, state):
+        """TODO: Implement policy to ensure short amount matches long amount"""
+
+        orders = []
+
+        # Collect market data for all components
+        basket1_data = MarketData(state.order_depths["PICNIC_BASKET1"])
+        croissants_data = MarketData(state.order_depths["CROISSANTS"])
+        jams_data = MarketData(state.order_depths["JAMS"])
+        djembe_data = MarketData(state.order_depths["DJEMBES"])
+
+        # one basket1 contains 6 croissants, 3 jams, and 1 djembe
+        estimate_basket1_price = (
+            6 * croissants_data.mid_price
+            + 3 * jams_data.mid_price
+            + djembe_data.mid_price
+        )
+
+        # When people overpay for basket1, we can sell it and buy the components
+        if basket1_data.best_bid - estimate_basket1_price > self.PRICE_MARGIN_THRESHOLD:
+            sell_order: None | Order = self.create_sell_order(
+                basket1_data.best_bid, market_data, current_position, 1
+            )
+            if sell_order:
+                # Create buy orders for the components
+                buy_order_croissants: None | Order = self.create_buy_order(
+                    croissants_data.best_ask, market_data, current_position, 6
+                )
+                buy_order_jams: None | Order = self.create_buy_order(
+                    jams_data.best_ask, market_data, current_position, 3
+                )
+                buy_order_djembe: None | Order = self.create_buy_order(
+                    djembe_data.best_ask, market_data, current_position, 1
+                )
+                # Check if all buy orders are valid
+                if buy_order_croissants and buy_order_jams and buy_order_djembe:
+                    orders.append(sell_order)
+                    orders.append(buy_order_croissants)
+                    orders.append(buy_order_jams)
+                    orders.append(buy_order_djembe)
+        # When people underpay for basket1, we can buy it and sell the components
+        elif (
+            estimate_basket1_price - basket1_data.best_ask > self.PRICE_MARGIN_THRESHOLD
+        ):
+            buy_order: None | Order = self.create_buy_order(
+                basket1_data.best_ask, market_data, current_position, 1
+            )
+            if buy_order:
+                # Create sell orders for the components
+                sell_order_croissants: None | Order = self.create_sell_order(
+                    croissants_data.best_bid, market_data, current_position, 6
+                )
+                sell_order_jams: None | Order = self.create_sell_order(
+                    jams_data.best_bid, market_data, current_position, 3
+                )
+                sell_order_djembe: None | Order = self.create_sell_order(
+                    djembe_data.best_bid, market_data, current_position, 1
+                )
+                # Check if all sell orders are valid
+                if sell_order_croissants and sell_order_jams and sell_order_djembe:
+                    orders.append(buy_order)
+                    orders.append(sell_order_croissants)
+                    orders.append(sell_order_jams)
+                    orders.append(sell_order_djembe)
+        return orders
+
+
 class Trader:
     def __init__(self):
-        self.strategies = {
+        # Initialize strategies for each product
+        self.r1_strategies: dict[str, TradingStrategy] = {
             "RAINFOREST_RESIN": ResinStrategy("RAINFOREST_RESIN"),
             "SQUID_INK": SquidInkStrategy("SQUID_INK"),
             "KELP": KelpStrategy("KELP"),
+        }
+        self.r2_strategies: dict[str, TradingStrategy] = {
+            "PICNIC_BASKET1": PicnicBasket1Strategy("PICNIC_BASKET1"),
         }
 
     def run(self, state: TradingState):
         result = {}
         conversions = 0
+
         for product in state.order_depths:
-            if product in self.strategies:
+            if product in self.r1_strategies:
                 order_depth = state.order_depths[product]
                 current_position = state.position.get(product, 0)
+
+                # Create market data object with all calculations done once
                 market_data = MarketData(order_depth)
-                self.strategies[product].update_price_history(market_data.mid_price)
-                orders = self.strategies[product].generate_orders(market_data, current_position, state.timestamp)
+
+                # Update strategy with new price
+                self.r1_strategies[product].update_price_history(market_data.mid_price)
+
+                # Generate orders using the appropriate strategy
+                orders = self.r1_strategies[product].generate_orders(
+                    market_data, current_position, state.timestamp
+                )
                 result[product] = orders
+            elif product in self.r2_strategies:
+                order_depth = state.order_depths[product]
+                current_position = state.position.get(product, 0)
+
+                # Generate orders using the appropriate strategy
+                orders = self.r2_strategies[product].generate_orders(
+                    market_data, current_position, state.timestamp, state=state
+                )
+                result[product] = orders
+
         return result, conversions, ""
