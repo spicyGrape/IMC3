@@ -51,7 +51,9 @@ class MarketData:
         )
         self.bid_volume = sum(order_depth.buy_orders.values())
         self.ask_volume = -sum(order_depth.sell_orders.values())
-        self.spread = (self.best_ask - self.best_bid) if self.best_bid and self.best_ask else None
+        self.spread = (
+            (self.best_ask - self.best_bid) if self.best_bid and self.best_ask else None
+        )
 
 
 class TradingStrategy:
@@ -71,14 +73,22 @@ class TradingStrategy:
             return None
         if max_volume is None:
             max_volume = self.position_limit - current_position
-        return Order(self.product, safe_price(price), min(max_volume, self.position_limit - current_position))
+        return Order(
+            self.product,
+            safe_price(price),
+            min(max_volume, self.position_limit - current_position),
+        )
 
     def create_sell_order(self, price, market_data, current_position, max_volume=None):
         if current_position <= -self.position_limit:
             return None
         if max_volume is None:
             max_volume = current_position + self.position_limit
-        return Order(self.product, safe_price(price), -min(max_volume, current_position + self.position_limit))
+        return Order(
+            self.product,
+            safe_price(price),
+            -min(max_volume, current_position + self.position_limit),
+        )
 
     def generate_orders(self, market_data, current_position, timestamp):
         raise NotImplementedError
@@ -94,7 +104,9 @@ class ResinStrategy(TradingStrategy):
         else:
             anchor = int(np.median(prices[-10:]))
 
-        spread = market_data.spread if market_data.spread and market_data.spread >= 2 else 2
+        spread = (
+            market_data.spread if market_data.spread and market_data.spread >= 2 else 2
+        )
 
         buy_price = anchor - spread // 2
         sell_price = anchor + spread // 2
@@ -102,7 +114,9 @@ class ResinStrategy(TradingStrategy):
         buy_order = self.create_buy_order(buy_price, market_data, current_position, 3)
         if buy_order:
             orders.append(buy_order)
-        sell_order = self.create_sell_order(sell_price, market_data, current_position, 3)
+        sell_order = self.create_sell_order(
+            sell_price, market_data, current_position, 3
+        )
         if sell_order:
             orders.append(sell_order)
 
@@ -133,12 +147,16 @@ class SquidInkStrategy(TradingStrategy):
                     signal = "SELL"
                 if signal == "BUY" and market_data.best_ask:
                     if market_data.ask_volume > 2 * market_data.bid_volume:
-                        buy_order = self.create_buy_order(market_data.best_ask, market_data, current_position, 6)
+                        buy_order = self.create_buy_order(
+                            market_data.best_ask, market_data, current_position, 6
+                        )
                         if buy_order:
                             orders.append(buy_order)
                 elif signal == "SELL" and market_data.best_bid:
                     if market_data.bid_volume > 2 * market_data.ask_volume:
-                        sell_order = self.create_sell_order(market_data.best_bid, market_data, current_position, 6)
+                        sell_order = self.create_sell_order(
+                            market_data.best_bid, market_data, current_position, 6
+                        )
                         if sell_order:
                             orders.append(sell_order)
         return orders
@@ -168,57 +186,20 @@ class KelpStrategy(TradingStrategy):
         mid_price = market_data.mid_price
 
         if ma_short > ma_long and current_position < self.position_limit:
-            buy_order = self.create_buy_order(mid_price - 1, market_data, current_position, 2)
+            buy_order = self.create_buy_order(
+                mid_price - 1, market_data, current_position, 2
+            )
             if buy_order:
                 orders.append(buy_order)
                 self.last_trade_time = timestamp
 
         elif ma_short < ma_long and current_position > -self.position_limit:
-            sell_order = self.create_sell_order(mid_price + 1, market_data, current_position, 2)
+            sell_order = self.create_sell_order(
+                mid_price + 1, market_data, current_position, 2
+            )
             if sell_order:
                 orders.append(sell_order)
                 self.last_trade_time = timestamp
-
-        return orders
-
-        if timestamp - self.last_trade_time < KELP_COOLDOWN:
-            return orders
-
-        slope = linear_trend_slope(prices[-10:])
-        rsi = compute_rsi(pd.Series(prices), window=6).iloc[-1]
-
-        signal = "HOLD"
-        if slope > SLOPE_THRESHOLD and rsi < 65:
-            signal = "BUY"
-        elif slope < -SLOPE_THRESHOLD and rsi > 35:
-            signal = "SELL"
-
-        mid_price = int(round((market_data.best_bid + market_data.best_ask) / 2))
-
-        if signal == "BUY":
-            buy_order = self.create_buy_order(mid_price - 1, market_data, current_position, 2)
-            if buy_order:
-                orders.append(buy_order)
-                self.last_trade_time = timestamp
-        elif signal == "SELL":
-            sell_order = self.create_sell_order(mid_price + 1, market_data, current_position, 2)
-            if sell_order:
-                orders.append(sell_order)
-                self.last_trade_time = timestamp
-
-        return orders
-
-        slope = linear_trend_slope(prices[-10:])
-        direction = "UP" if slope > 0.1 else "DOWN" if slope < -0.1 else "NEUTRAL"
-
-        if direction == "UP" and market_data.best_ask:
-            buy_order = self.create_buy_order(market_data.best_ask, market_data, current_position, 2)
-            if buy_order:
-                orders.append(buy_order)
-        elif direction == "DOWN" and market_data.best_bid:
-            sell_order = self.create_sell_order(market_data.best_bid, market_data, current_position, 2)
-            if sell_order:
-                orders.append(sell_order)
 
         return orders
 

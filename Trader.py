@@ -49,6 +49,11 @@ class MarketData:
             if self.best_bid and self.best_ask
             else None
         )
+        self.bid_volume = sum(order_depth.buy_orders.values())
+        self.ask_volume = -sum(order_depth.sell_orders.values())
+        self.spread = (
+            (self.best_ask - self.best_bid) if self.best_bid and self.best_ask else None
+        )
 
 
 class TradingStrategy:
@@ -99,17 +104,25 @@ class TradingStrategy:
 class ResinStrategy(TradingStrategy):
     def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
         orders = []
-        fair_price = 10000
-        spread = 1
+        prices = self.price_history
 
-        buy_order = self.create_buy_order(
-            fair_price - spread, market_data, current_position, 3
+        if len(prices) < 10:
+            anchor = 10000
+        else:
+            anchor = int(np.median(prices[-10:]))
+
+        spread = (
+            market_data.spread if market_data.spread and market_data.spread >= 2 else 2
         )
+
+        buy_price = anchor - spread // 2
+        sell_price = anchor + spread // 2
+
+        buy_order = self.create_buy_order(buy_price, market_data, current_position, 3)
         if buy_order:
             orders.append(buy_order)
-
         sell_order = self.create_sell_order(
-            fair_price + spread, market_data, current_position, 3
+            sell_price, market_data, current_position, 3
         )
         if sell_order:
             orders.append(sell_order)
@@ -124,77 +137,76 @@ class SquidInkStrategy(TradingStrategy):
     def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
         orders = []
         prices = self.price_history
-
         if len(prices) >= 10:
-            # Calculate indicators
             df = pd.DataFrame({"mid_price": prices})
             df["rsi"] = compute_rsi(df["mid_price"], window=6)
             df["momentum"] = df["mid_price"].diff(3)
             df = df.dropna()
-
             if not df.empty:
                 latest = df.iloc[-1]
                 rsi = latest["rsi"]
                 momentum = latest["momentum"]
                 slope = linear_trend_slope(prices[-10:])
-
-                # Determine trading signal
                 signal = "HOLD"
                 if rsi < 40 and momentum > 0 and slope > 0:
                     signal = "BUY"
                 elif rsi > 60 and momentum < 0 and slope < 0:
                     signal = "SELL"
-
-                # Generate orders based on signal
                 if signal == "BUY" and market_data.best_ask:
-                    buy_order = self.create_buy_order(
-                        market_data.best_ask, market_data, current_position, 5
-                    )
-                    if buy_order:
-                        orders.append(buy_order)
+                    if market_data.ask_volume > 2 * market_data.bid_volume:
+                        buy_order = self.create_buy_order(
+                            market_data.best_ask, market_data, current_position, 6
+                        )
+                        if buy_order:
+                            orders.append(buy_order)
                 elif signal == "SELL" and market_data.best_bid:
-                    sell_order = self.create_sell_order(
-                        market_data.best_bid, market_data, current_position, 5
-                    )
-                    if sell_order:
-                        orders.append(sell_order)
-
+                    if market_data.bid_volume > 2 * market_data.ask_volume:
+                        sell_order = self.create_sell_order(
+                            market_data.best_bid, market_data, current_position, 6
+                        )
+                        if sell_order:
+                            orders.append(sell_order)
         return orders
 
 
 class KelpStrategy(TradingStrategy):
     def __init__(self, product, position_limit=POSITION_LIMIT):
         super().__init__(product, position_limit)
-        self.last_trade_time = -KELP_COOLDOWN
+        self.cooldown = KELP_COOLDOWN
+        self.last_trade_time = -self.cooldown
+
+    def compute_ma(self, window):
+        if len(self.price_history) < window:
+            return np.mean(self.price_history)
+        return np.mean(self.price_history[-window:])
 
     def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
         orders = []
-        prices = self.price_history
+        if market_data.mid_price is None:
+            return orders
 
-        # Check if enough data and cooldown period has elapsed
-        if len(prices) >= 10 and (timestamp - self.last_trade_time >= KELP_COOLDOWN):
-            slope = linear_trend_slope(prices[-10:])
-            recent_volatility = np.std(prices[-5:])
+        if timestamp - self.last_trade_time < self.cooldown:
+            return orders
 
-            # Check if conditions for trading are met
-            if abs(slope) > SLOPE_THRESHOLD and recent_volatility > MIN_VOLATILITY:
-                volume = 1
+        ma_short = self.compute_ma(3)
+        ma_long = self.compute_ma(6)
+        mid_price = market_data.mid_price
 
-                if slope > 0 and market_data.best_ask:  # BUY signal
-                    buy_order = self.create_buy_order(
-                        market_data.best_ask, market_data, current_position, volume
-                    )
-                    if buy_order:
-                        orders.append(buy_order)
-                        self.last_trade_time = timestamp
+        if ma_short > ma_long and current_position < self.position_limit:
+            buy_order = self.create_buy_order(
+                mid_price - 1, market_data, current_position, 2
+            )
+            if buy_order:
+                orders.append(buy_order)
+                self.last_trade_time = timestamp
 
-                elif slope < 0 and market_data.best_bid:  # SELL signal
-                    sell_order = self.create_sell_order(
-                        market_data.best_bid, market_data, current_position, volume
-                    )
-                    if sell_order:
-                        orders.append(sell_order)
-                        self.last_trade_time = timestamp
+        elif ma_short < ma_long and current_position > -self.position_limit:
+            sell_order = self.create_sell_order(
+                mid_price + 1, market_data, current_position, 2
+            )
+            if sell_order:
+                orders.append(sell_order)
+                self.last_trade_time = timestamp
 
         return orders
 
