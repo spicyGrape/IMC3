@@ -215,10 +215,12 @@ class KelpStrategy(TradingStrategy):
 class PicnicBasket1Strategy(TradingStrategy):
     spread_backtrace = []
     WINDOW_SIZE = 1000
-    UPPER_THRESHOLD = float(os.getenv("UPPER_THRESHOLD", 1.05))
+    UPPER_THRESHOLD = float(os.getenv("UPPER_THRESHOLD", 1.3))
     LOWER_THRESHOLD = -UPPER_THRESHOLD
-    
-    PRICE_MARGIN_THRESHOLD = int(os.getenv("PICNIC_BASKET1_PRICE_MARGIN_THRESHOLD", 200))
+
+    PRICE_MARGIN_THRESHOLD = int(
+        os.getenv("PICNIC_BASKET1_PRICE_MARGIN_THRESHOLD", 200)
+    )
 
     def __init__(self, product, position_limit=60):
         super().__init__(product, position_limit)
@@ -240,13 +242,13 @@ class PicnicBasket1Strategy(TradingStrategy):
             + 3 * jams_data.mid_price
             + djembe_data.mid_price
         )
-        
+
         spread = basket1_data.best_bid - estimate_basket1_price
         self.spread_backtrace.append(spread)
         if len(self.spread_backtrace) < self.WINDOW_SIZE:
             return orders
-        mean = np.mean(self.spread_backtrace[-self.WINDOW_SIZE:])
-        std = np.std(self.spread_backtrace[-self.WINDOW_SIZE:])
+        mean = np.mean(self.spread_backtrace[-self.WINDOW_SIZE :])
+        std = np.std(self.spread_backtrace[-self.WINDOW_SIZE :])
         z_score = (spread - mean) / std
 
         # When people overpay for basket1, we can sell it and buy the components
@@ -272,9 +274,7 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(buy_order_jams)
                     orders.append(buy_order_djembe)
         # When people underpay for basket1, we can buy it and sell the components
-        elif (
-            z_score < self.LOWER_THRESHOLD
-        ):
+        elif z_score < self.LOWER_THRESHOLD:
             buy_order: None | Order = self.create_buy_order(
                 basket1_data.best_ask, market_data, current_position, 1
             )
@@ -297,8 +297,11 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(sell_order_djembe)
         return orders
 
+
 class PicnicBasket2Strategy(TradingStrategy):
-    PRICE_MARGIN_THRESHOLD2 = int(os.getenv("PICNIC_BASKET2_PRICE_MARGIN_THRESHOLD2", 100))
+    PRICE_MARGIN_THRESHOLD2 = int(
+        os.getenv("PICNIC_BASKET2_PRICE_MARGIN_THRESHOLD2", 100)
+    )
 
     def __init__(self, product, position_limit=60):
         super().__init__(product, position_limit)
@@ -314,12 +317,13 @@ class PicnicBasket2Strategy(TradingStrategy):
         jams_data = MarketData(state.order_depths["JAMS"])
 
         # one basket2 contains 4 croissants and 2 jams
-        estimate_basket2_price = (
-            4 * croissants_data.mid_price + 2 * jams_data.mid_price
-        )
+        estimate_basket2_price = 4 * croissants_data.mid_price + 2 * jams_data.mid_price
 
         # When people overpay for basket2, sell it and buy the components
-        if basket2_data.best_bid - estimate_basket2_price > self.PRICE_MARGIN_THRESHOLD2:
+        if (
+            basket2_data.best_bid - estimate_basket2_price
+            > self.PRICE_MARGIN_THRESHOLD2
+        ):
             sell_order: None | Order = self.create_sell_order(
                 basket2_data.best_bid, market_data, current_position, 1
             )
@@ -336,7 +340,10 @@ class PicnicBasket2Strategy(TradingStrategy):
                     orders.append(buy_order_jams)
 
         # When people underpay for basket2, buy it and sell the components
-        elif estimate_basket2_price - basket2_data.best_ask > self.PRICE_MARGIN_THRESHOLD2:
+        elif (
+            estimate_basket2_price - basket2_data.best_ask
+            > self.PRICE_MARGIN_THRESHOLD2
+        ):
             buy_order: None | Order = self.create_buy_order(
                 basket2_data.best_ask, market_data, current_position, 1
             )
@@ -352,6 +359,7 @@ class PicnicBasket2Strategy(TradingStrategy):
                     orders.append(sell_order_croissants)
                     orders.append(sell_order_jams)
         return orders
+
 
 class Trader:
     def __init__(self):
