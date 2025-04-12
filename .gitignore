@@ -1,2 +1,4 @@
 __pycache__/
 backtests/
+/gridsearch.log
+/test.csv
