@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import os
 
-POSITION_LIMIT = 20
+POSITION_LIMIT = 50
 WMA_WINDOWS = {"SQUID_INK": 5, "KELP": 5}
 IDLE_THRESHOLD = 5
 MIN_VOLATILITY = 1.2
