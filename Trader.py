@@ -223,32 +223,55 @@ class TradingStrategy:
             if len(self.price_history) > 30:  # Keep reasonable history
                 self.price_history = self.price_history[-30:]
 
-    def create_buy_order(self, price, market_data, current_position, max_volume=None):
+    def create_buy_order(
+        self,
+        price,
+        market_data,
+        current_position,
+        max_volume=None,
+        product=None,
+        position_limit=None,
+    ):
         """Helper method to create a buy order with position limit checks"""
-        if current_position >= self.position_limit:
+        if position_limit is None:
+            position_limit = self.position_limit
+        if product is None:
+            product = self.product
+        if max_volume is None:
+            max_volume = position_limit - current_position
+        if current_position >= position_limit:
             return None
 
-        if max_volume is None:
-            max_volume = self.position_limit - current_position
-
         return Order(
-            self.product,
+            product,
             safe_price(price),
-            min(max_volume, self.position_limit - current_position),
+            min(max_volume, position_limit - current_position),
         )
 
-    def create_sell_order(self, price, market_data, current_position, max_volume=None):
+    def create_sell_order(
+        self,
+        price,
+        market_data,
+        current_position,
+        max_volume=None,
+        product=None,
+        position_limit=None,
+    ):
         """Helper method to create a sell order with position limit checks"""
-        if current_position <= -self.position_limit:
+        if position_limit is None:
+            position_limit = self.position_limit
+        if product is None:
+            product = self.product
+        if max_volume is None:
+            max_volume = current_position + position_limit
+
+        if current_position <= -position_limit:
             return None
 
-        if max_volume is None:
-            max_volume = current_position + self.position_limit
-
         return Order(
-            self.product,
+            product,
             safe_price(price),
-            -min(max_volume, current_position + self.position_limit),
+            -min(max_volume, current_position + position_limit),
         )
 
     def generate_orders(self, market_data, current_position, timestamp):
@@ -370,7 +393,7 @@ class PicnicBasket1Strategy(TradingStrategy):
     overpay_spread_backtrace = []
     underpay_spread_backtrace = []
     WINDOW_SIZE = 1000
-    UPPER_THRESHOLD = float(os.getenv("UPPER_THRESHOLD", 1.3))
+    UPPER_THRESHOLD = float(os.getenv("UPPER_THRESHOLD", 0.8))
     LOWER_THRESHOLD = -UPPER_THRESHOLD
 
     PRICE_MARGIN_THRESHOLD = int(
@@ -380,7 +403,9 @@ class PicnicBasket1Strategy(TradingStrategy):
     def __init__(self, product, position_limit=60):
         super().__init__(product, position_limit)
 
-    def generate_orders(self, market_data, current_position, timestamp, state):
+    def generate_orders(
+        self, market_data, current_position, timestamp, state: TradingState
+    ):
         """TODO: Implement policy to ensure short amount matches long amount"""
 
         orders = []
@@ -404,10 +429,13 @@ class PicnicBasket1Strategy(TradingStrategy):
         overpay_spread = basket1_data.best_bid - estimate_basket1_ask
         # short components and long basket1 when people underpay for basket1
         underpay_spread = -(estimate_basket1_bid - basket1_data.best_ask)
+
         self.overpay_spread_backtrace.append(overpay_spread)
         self.underpay_spread_backtrace.append(underpay_spread)
+
         if len(self.overpay_spread_backtrace) < self.WINDOW_SIZE:
             return orders
+
         overpay_mean = np.mean(self.overpay_spread_backtrace[-self.WINDOW_SIZE :])
         overpay_std = np.std(self.overpay_spread_backtrace[-self.WINDOW_SIZE :])
         overpay_z_score = (overpay_spread - overpay_mean) / overpay_std
@@ -416,21 +444,36 @@ class PicnicBasket1Strategy(TradingStrategy):
         underpay_std = np.std(self.underpay_spread_backtrace[-self.WINDOW_SIZE :])
         underpay_z_score = (underpay_spread - underpay_mean) / underpay_std
 
-        # When people overpay for basket1, we can sell it and buy the components
-        if overpay_z_score > self.UPPER_THRESHOLD:
+        # When people overpay for basket 1, we can sell it and buy the components
+        if overpay_spread > 0:
             sell_order: None | Order = self.create_sell_order(
                 basket1_data.best_bid, market_data, current_position, 1
             )
             if sell_order:
                 # Create buy orders for the components
                 buy_order_croissants: None | Order = self.create_buy_order(
-                    croissants_data.best_ask, market_data, current_position, 6
+                    croissants_data.best_ask,
+                    market_data,
+                    state.position.get("CROISSANTS", 0),
+                    6,
+                    product="CROISSANTS",
+                    position_limit=250,
                 )
                 buy_order_jams: None | Order = self.create_buy_order(
-                    jams_data.best_ask, market_data, current_position, 3
+                    jams_data.best_ask,
+                    market_data,
+                    state.position.get("JAMS", 0),
+                    3,
+                    product="JAMS",
+                    position_limit=350,
                 )
                 buy_order_djembe: None | Order = self.create_buy_order(
-                    djembe_data.best_ask, market_data, current_position, 1
+                    djembe_data.best_ask,
+                    market_data,
+                    state.position.get("DJEMBES", 0),
+                    1,
+                    product="DJEMBES",
+                    position_limit=60,
                 )
                 # Check if all buy orders are valid
                 if buy_order_croissants and buy_order_jams and buy_order_djembe:
@@ -438,21 +481,36 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(buy_order_croissants)
                     orders.append(buy_order_jams)
                     orders.append(buy_order_djembe)
-        # When people underpay for basket1, we can buy it and sell the components
-        elif underpay_z_score < self.LOWER_THRESHOLD:
+        # When people underpay for basket 1, we can buy it and sell the components
+        elif -underpay_spread > 0:
             buy_order: None | Order = self.create_buy_order(
                 basket1_data.best_ask, market_data, current_position, 1
             )
             if buy_order:
                 # Create sell orders for the components
                 sell_order_croissants: None | Order = self.create_sell_order(
-                    croissants_data.best_bid, market_data, current_position, 6
+                    croissants_data.best_bid,
+                    market_data,
+                    state.position.get("CROISSANTS", 0),
+                    6,
+                    product="CROISSANTS",
+                    position_limit=250,
                 )
                 sell_order_jams: None | Order = self.create_sell_order(
-                    jams_data.best_bid, market_data, current_position, 3
+                    jams_data.best_bid,
+                    market_data,
+                    state.position.get("JAMS", 0),
+                    3,
+                    product="JAMS",
+                    position_limit=350,
                 )
                 sell_order_djembe: None | Order = self.create_sell_order(
-                    djembe_data.best_bid, market_data, current_position, 1
+                    djembe_data.best_bid,
+                    market_data,
+                    state.position.get("DJEMBES", 0),
+                    1,
+                    product="DJEMBES",
+                    position_limit=60,
                 )
                 # Check if all sell orders are valid
                 if sell_order_croissants and sell_order_jams and sell_order_djembe:
@@ -460,6 +518,13 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(sell_order_croissants)
                     orders.append(sell_order_jams)
                     orders.append(sell_order_djembe)
+        logger.print(
+            f"Overpay Z-Score: {overpay_z_score}, Underpay Z-Score: {underpay_z_score}"
+        )
+        logger.print(
+            f"Overpay Spread: {overpay_spread}, Underpay Spread: {underpay_spread}"
+        )
+        logger.print(orders)
         return orders
 
 
@@ -544,12 +609,14 @@ class Trader:
         conversions = 0
 
         for product in state.order_depths:
-            if product in self.r1_strategies:
-                order_depth = state.order_depths[product]
-                current_position = state.position.get(product, 0)
+            order_depth = state.order_depths[product]
+            current_position = state.position.get(product, 0)
 
-                # Create market data object with all calculations done once
-                market_data = MarketData(order_depth)
+            # Create market data object with all calculations done once
+            market_data = MarketData(order_depth)
+            if product in self.r1_strategies:
+                # FOR DEGUBGING
+                continue
 
                 # Update strategy with new price
                 self.r1_strategies[product].update_price_history(market_data.mid_price)
