@@ -4,6 +4,7 @@ import json
 import math
 import numpy as np
 import pandas as pd
+import os
 
 POSITION_LIMIT = 20
 WMA_WINDOWS = {"SQUID_INK": 5, "KELP": 5}
@@ -200,7 +201,7 @@ class KelpStrategy(TradingStrategy):
 
 
 class PicnicBasket1Strategy(TradingStrategy):
-    PRICE_MARGIN_THRESHOLD = 200
+    PRICE_MARGIN_THRESHOLD = int(os.getenv("PICNIC_BASKET1_PRICE_MARGIN_THRESHOLD", 200))
 
     def __init__(self, product, position_limit=60):
         super().__init__(product, position_limit)
@@ -271,6 +272,61 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(sell_order_djembe)
         return orders
 
+class PicnicBasket2Strategy(TradingStrategy):
+    PRICE_MARGIN_THRESHOLD2 = int(os.getenv("PICNIC_BASKET2_PRICE_MARGIN_THRESHOLD2", 100))
+
+    def __init__(self, product, position_limit=60):
+        super().__init__(product, position_limit)
+
+    def generate_orders(self, market_data, current_position, timestamp, state):
+        """Implement policy to ensure short amount matches long amount for Basket2"""
+
+        orders = []
+
+        # Collect market data for all components
+        basket2_data = MarketData(state.order_depths["PICNIC_BASKET2"])
+        croissants_data = MarketData(state.order_depths["CROISSANTS"])
+        jams_data = MarketData(state.order_depths["JAMS"])
+
+        # one basket2 contains 4 croissants and 2 jams
+        estimate_basket2_price = (
+            4 * croissants_data.mid_price + 2 * jams_data.mid_price
+        )
+
+        # When people overpay for basket2, sell it and buy the components
+        if basket2_data.best_bid - estimate_basket2_price > self.PRICE_MARGIN_THRESHOLD2:
+            sell_order: None | Order = self.create_sell_order(
+                basket2_data.best_bid, market_data, current_position, 1
+            )
+            if sell_order:
+                buy_order_croissants: None | Order = self.create_buy_order(
+                    croissants_data.best_ask, market_data, current_position, 4
+                )
+                buy_order_jams: None | Order = self.create_buy_order(
+                    jams_data.best_ask, market_data, current_position, 2
+                )
+                if buy_order_croissants and buy_order_jams:
+                    orders.append(sell_order)
+                    orders.append(buy_order_croissants)
+                    orders.append(buy_order_jams)
+
+        # When people underpay for basket2, buy it and sell the components
+        elif estimate_basket2_price - basket2_data.best_ask > self.PRICE_MARGIN_THRESHOLD2:
+            buy_order: None | Order = self.create_buy_order(
+                basket2_data.best_ask, market_data, current_position, 1
+            )
+            if buy_order:
+                sell_order_croissants: None | Order = self.create_sell_order(
+                    croissants_data.best_bid, market_data, current_position, 4
+                )
+                sell_order_jams: None | Order = self.create_sell_order(
+                    jams_data.best_bid, market_data, current_position, 2
+                )
+                if sell_order_croissants and sell_order_jams:
+                    orders.append(buy_order)
+                    orders.append(sell_order_croissants)
+                    orders.append(sell_order_jams)
+        return orders
 
 class Trader:
     def __init__(self):
@@ -282,6 +338,7 @@ class Trader:
         }
         self.r2_strategies: dict[str, TradingStrategy] = {
             "PICNIC_BASKET1": PicnicBasket1Strategy("PICNIC_BASKET1"),
+            "PICNIC_BASKET2": PicnicBasket2Strategy("PICNIC_BASKET2"),
         }
 
     def run(self, state: TradingState):
