@@ -4,10 +4,10 @@ import os
 
 log_filename = "gridsearch.log"
 
-for i in range(21):
-	threshold = 0 + i * 10
+for i in range(11):
+	threshold = 0.85 + i * 0.05
 
-	env = dict(os.environ, PICNIC_BASKET1_PRICE_MARGIN_THRESHOLD2=str(threshold))
+	env = dict(os.environ, UPPER_THRESHOLD=str(threshold))
 
 	# Append grid search info to the log
 	with open(log_filename, "a") as log_file:

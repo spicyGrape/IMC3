@@ -201,6 +201,11 @@ class KelpStrategy(TradingStrategy):
 
 
 class PicnicBasket1Strategy(TradingStrategy):
+    spread_backtrace = []
+    WINDOW_SIZE = 1000
+    UPPER_THRESHOLD = float(os.getenv("UPPER_THRESHOLD", 1.05))
+    LOWER_THRESHOLD = -UPPER_THRESHOLD
+    
     PRICE_MARGIN_THRESHOLD = int(os.getenv("PICNIC_BASKET1_PRICE_MARGIN_THRESHOLD", 200))
 
     def __init__(self, product, position_limit=60):
@@ -223,9 +228,17 @@ class PicnicBasket1Strategy(TradingStrategy):
             + 3 * jams_data.mid_price
             + djembe_data.mid_price
         )
+        
+        spread = basket1_data.best_bid - estimate_basket1_price
+        self.spread_backtrace.append(spread)
+        if len(self.spread_backtrace) < self.WINDOW_SIZE:
+            return orders
+        mean = np.mean(self.spread_backtrace[-self.WINDOW_SIZE:])
+        std = np.std(self.spread_backtrace[-self.WINDOW_SIZE:])
+        z_score = (spread - mean) / std
 
         # When people overpay for basket1, we can sell it and buy the components
-        if basket1_data.best_bid - estimate_basket1_price > self.PRICE_MARGIN_THRESHOLD:
+        if z_score > self.UPPER_THRESHOLD:
             sell_order: None | Order = self.create_sell_order(
                 basket1_data.best_bid, market_data, current_position, 1
             )
@@ -248,7 +261,7 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(buy_order_djembe)
         # When people underpay for basket1, we can buy it and sell the components
         elif (
-            estimate_basket1_price - basket1_data.best_ask > self.PRICE_MARGIN_THRESHOLD
+            z_score < self.LOWER_THRESHOLD
         ):
             buy_order: None | Order = self.create_buy_order(
                 basket1_data.best_ask, market_data, current_position, 1
@@ -338,7 +351,7 @@ class Trader:
         }
         self.r2_strategies: dict[str, TradingStrategy] = {
             "PICNIC_BASKET1": PicnicBasket1Strategy("PICNIC_BASKET1"),
-            "PICNIC_BASKET2": PicnicBasket2Strategy("PICNIC_BASKET2"),
+            # "PICNIC_BASKET2": PicnicBasket2Strategy("PICNIC_BASKET2"),
         }
 
     def run(self, state: TradingState):
