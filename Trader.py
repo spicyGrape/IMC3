@@ -460,6 +460,10 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(sell_order_croissants)
                     orders.append(sell_order_jams)
                     orders.append(sell_order_djembe)
+        logger.print(
+            f"Overpay Z-Score: {overpay_z_score}, Underpay Z-Score: {underpay_z_score}"
+        )
+        logger.print(orders)
         return orders
 
 
