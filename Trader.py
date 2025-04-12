@@ -237,11 +237,10 @@ class TradingStrategy:
             position_limit = self.position_limit
         if product is None:
             product = self.product
-        if current_position >= position_limit:
-            return None
-
         if max_volume is None:
             max_volume = position_limit - current_position
+        if current_position >= position_limit:
+            return None
 
         return Order(
             self.product,
@@ -263,12 +262,11 @@ class TradingStrategy:
             position_limit = self.position_limit
         if product is None:
             product = self.product
+        if max_volume is None:
+            max_volume = current_position + position_limit
 
         if current_position <= -position_limit:
             return None
-
-        if max_volume is None:
-            max_volume = current_position + position_limit
 
         return Order(
             self.product,
