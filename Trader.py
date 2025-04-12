@@ -223,32 +223,57 @@ class TradingStrategy:
             if len(self.price_history) > 30:  # Keep reasonable history
                 self.price_history = self.price_history[-30:]
 
-    def create_buy_order(self, price, market_data, current_position, max_volume=None):
+    def create_buy_order(
+        self,
+        price,
+        market_data,
+        current_position,
+        max_volume=None,
+        product=None,
+        position_limit=None,
+    ):
         """Helper method to create a buy order with position limit checks"""
-        if current_position >= self.position_limit:
+        if position_limit is None:
+            position_limit = self.position_limit
+        if product is None:
+            product = self.product
+        if current_position >= position_limit:
             return None
 
         if max_volume is None:
-            max_volume = self.position_limit - current_position
+            max_volume = position_limit - current_position
 
         return Order(
             self.product,
             safe_price(price),
-            min(max_volume, self.position_limit - current_position),
+            min(max_volume, position_limit - current_position),
         )
 
-    def create_sell_order(self, price, market_data, current_position, max_volume=None):
+    def create_sell_order(
+        self,
+        price,
+        market_data,
+        current_position,
+        max_volume=None,
+        product=None,
+        position_limit=None,
+    ):
         """Helper method to create a sell order with position limit checks"""
-        if current_position <= -self.position_limit:
+        if position_limit is None:
+            position_limit = self.position_limit
+        if product is None:
+            product = self.product
+
+        if current_position <= -position_limit:
             return None
 
         if max_volume is None:
-            max_volume = current_position + self.position_limit
+            max_volume = current_position + position_limit
 
         return Order(
             self.product,
             safe_price(price),
-            -min(max_volume, current_position + self.position_limit),
+            -min(max_volume, current_position + position_limit),
         )
 
     def generate_orders(self, market_data, current_position, timestamp):
