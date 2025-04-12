@@ -213,7 +213,8 @@ class KelpStrategy(TradingStrategy):
 
 
 class PicnicBasket1Strategy(TradingStrategy):
-    spread_backtrace = []
+    overpay_spread_backtrace = []
+    underpay_spread_backtrace = []
     WINDOW_SIZE = 1000
     UPPER_THRESHOLD = float(os.getenv("UPPER_THRESHOLD", 1.3))
     LOWER_THRESHOLD = -UPPER_THRESHOLD
@@ -237,22 +238,32 @@ class PicnicBasket1Strategy(TradingStrategy):
         djembe_data = MarketData(state.order_depths["DJEMBES"])
 
         # one basket1 contains 6 croissants, 3 jams, and 1 djembe
-        estimate_basket1_price = (
-            6 * croissants_data.mid_price
-            + 3 * jams_data.mid_price
-            + djembe_data.mid_price
+        estimate_basket1_ask = (
+            6 * croissants_data.best_ask + 3 * jams_data.best_ask + djembe_data.best_ask
         )
 
-        spread = basket1_data.best_bid - estimate_basket1_price
-        self.spread_backtrace.append(spread)
-        if len(self.spread_backtrace) < self.WINDOW_SIZE:
+        estimate_basket1_bid = (
+            6 * croissants_data.best_bid + 3 * jams_data.best_bid + djembe_data.best_bid
+        )
+
+        # long components and short basket1 when people overpay for basket1
+        overpay_spread = basket1_data.best_bid - estimate_basket1_ask
+        # short components and long basket1 when people underpay for basket1
+        underpay_spread = -(estimate_basket1_bid - basket1_data.best_ask)
+        self.overpay_spread_backtrace.append(overpay_spread)
+        self.underpay_spread_backtrace.append(underpay_spread)
+        if len(self.overpay_spread_backtrace) < self.WINDOW_SIZE:
             return orders
-        mean = np.mean(self.spread_backtrace[-self.WINDOW_SIZE :])
-        std = np.std(self.spread_backtrace[-self.WINDOW_SIZE :])
-        z_score = (spread - mean) / std
+        overpay_mean = np.mean(self.overpay_spread_backtrace[-self.WINDOW_SIZE :])
+        overpay_std = np.std(self.overpay_spread_backtrace[-self.WINDOW_SIZE :])
+        overpay_z_score = (overpay_spread - overpay_mean) / overpay_std
+
+        underpay_mean = np.mean(self.underpay_spread_backtrace[-self.WINDOW_SIZE :])
+        underpay_std = np.std(self.underpay_spread_backtrace[-self.WINDOW_SIZE :])
+        underpay_z_score = (underpay_spread - underpay_mean) / underpay_std
 
         # When people overpay for basket1, we can sell it and buy the components
-        if z_score > self.UPPER_THRESHOLD:
+        if overpay_z_score > self.UPPER_THRESHOLD:
             sell_order: None | Order = self.create_sell_order(
                 basket1_data.best_bid, market_data, current_position, 1
             )
@@ -274,7 +285,7 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(buy_order_jams)
                     orders.append(buy_order_djembe)
         # When people underpay for basket1, we can buy it and sell the components
-        elif z_score < self.LOWER_THRESHOLD:
+        elif underpay_z_score < self.LOWER_THRESHOLD:
             buy_order: None | Order = self.create_buy_order(
                 basket1_data.best_ask, market_data, current_position, 1
             )
