@@ -4,6 +4,7 @@ import json
 import math
 import numpy as np
 import pandas as pd
+import collections
 
 POSITION_LIMIT = 50
 WMA_WINDOWS = {"SQUID_INK": 5, "KELP": 5}
@@ -51,9 +52,7 @@ class MarketData:
         )
         self.bid_volume = sum(order_depth.buy_orders.values())
         self.ask_volume = -sum(order_depth.sell_orders.values())
-        self.spread = (
-            (self.best_ask - self.best_bid) if self.best_bid and self.best_ask else None
-        )
+        self.spread = (self.best_ask - self.best_bid) if self.best_bid and self.best_ask else None
 
 
 class TradingStrategy:
@@ -73,26 +72,17 @@ class TradingStrategy:
             return None
         if max_volume is None:
             max_volume = self.position_limit - current_position
-        return Order(
-            self.product,
-            safe_price(price),
-            min(max_volume, self.position_limit - current_position),
-        )
+        return Order(self.product, safe_price(price), min(max_volume, self.position_limit - current_position))
 
     def create_sell_order(self, price, market_data, current_position, max_volume=None):
         if current_position <= -self.position_limit:
             return None
         if max_volume is None:
             max_volume = current_position + self.position_limit
-        return Order(
-            self.product,
-            safe_price(price),
-            -min(max_volume, current_position + self.position_limit),
-        )
+        return Order(self.product, safe_price(price), -min(max_volume, current_position + self.position_limit))
 
     def generate_orders(self, market_data, current_position, timestamp):
         raise NotImplementedError
-
 
 class ResinStrategy(TradingStrategy):
     def generate_orders(self, market_data, current_position, timestamp) -> list[Order]:
@@ -104,9 +94,7 @@ class ResinStrategy(TradingStrategy):
         else:
             anchor = int(np.median(prices[-10:]))
 
-        spread = (
-            market_data.spread if market_data.spread and market_data.spread >= 2 else 2
-        )
+        spread = market_data.spread if market_data.spread and market_data.spread >= 2 else 2
 
         buy_price = anchor - spread // 2
         sell_price = anchor + spread // 2
@@ -114,9 +102,7 @@ class ResinStrategy(TradingStrategy):
         buy_order = self.create_buy_order(buy_price, market_data, current_position, 3)
         if buy_order:
             orders.append(buy_order)
-        sell_order = self.create_sell_order(
-            sell_price, market_data, current_position, 3
-        )
+        sell_order = self.create_sell_order(sell_price, market_data, current_position, 3)
         if sell_order:
             orders.append(sell_order)
 
@@ -147,16 +133,12 @@ class SquidInkStrategy(TradingStrategy):
                     signal = "SELL"
                 if signal == "BUY" and market_data.best_ask:
                     if market_data.ask_volume > 2 * market_data.bid_volume:
-                        buy_order = self.create_buy_order(
-                            market_data.best_ask, market_data, current_position, 6
-                        )
+                        buy_order = self.create_buy_order(market_data.best_ask, market_data, current_position, 6)
                         if buy_order:
                             orders.append(buy_order)
                 elif signal == "SELL" and market_data.best_bid:
                     if market_data.bid_volume > 2 * market_data.ask_volume:
-                        sell_order = self.create_sell_order(
-                            market_data.best_bid, market_data, current_position, 6
-                        )
+                        sell_order = self.create_sell_order(market_data.best_bid, market_data, current_position, 6)
                         if sell_order:
                             orders.append(sell_order)
         return orders
@@ -186,23 +168,59 @@ class KelpStrategy(TradingStrategy):
         mid_price = market_data.mid_price
 
         if ma_short > ma_long and current_position < self.position_limit:
-            buy_order = self.create_buy_order(
-                mid_price - 1, market_data, current_position, 2
-            )
+            buy_order = self.create_buy_order(mid_price - 1, market_data, current_position, 2)
             if buy_order:
                 orders.append(buy_order)
                 self.last_trade_time = timestamp
 
         elif ma_short < ma_long and current_position > -self.position_limit:
-            sell_order = self.create_sell_order(
-                mid_price + 1, market_data, current_position, 2
-            )
+            sell_order = self.create_sell_order(mid_price + 1, market_data, current_position, 2)
             if sell_order:
                 orders.append(sell_order)
                 self.last_trade_time = timestamp
 
         return orders
 
+        if timestamp - self.last_trade_time < KELP_COOLDOWN:
+            return orders
+
+        slope = linear_trend_slope(prices[-10:])
+        rsi = compute_rsi(pd.Series(prices), window=6).iloc[-1]
+
+        signal = "HOLD"
+        if slope > SLOPE_THRESHOLD and rsi < 65:
+            signal = "BUY"
+        elif slope < -SLOPE_THRESHOLD and rsi > 35:
+            signal = "SELL"
+
+        mid_price = int(round((market_data.best_bid + market_data.best_ask) / 2))
+
+        if signal == "BUY":
+            buy_order = self.create_buy_order(mid_price - 1, market_data, current_position, 2)
+            if buy_order:
+                orders.append(buy_order)
+                self.last_trade_time = timestamp
+        elif signal == "SELL":
+            sell_order = self.create_sell_order(mid_price + 1, market_data, current_position, 2)
+            if sell_order:
+                orders.append(sell_order)
+                self.last_trade_time = timestamp
+
+        return orders
+
+        slope = linear_trend_slope(prices[-10:])
+        direction = "UP" if slope > 0.1 else "DOWN" if slope < -0.1 else "NEUTRAL"
+
+        if direction == "UP" and market_data.best_ask:
+            buy_order = self.create_buy_order(market_data.best_ask, market_data, current_position, 2)
+            if buy_order:
+                orders.append(buy_order)
+        elif direction == "DOWN" and market_data.best_bid:
+            sell_order = self.create_sell_order(market_data.best_bid, market_data, current_position, 2)
+            if sell_order:
+                orders.append(sell_order)
+
+        return orders
 
 class PicnicBasket1Strategy(TradingStrategy):
     PRICE_MARGIN_THRESHOLD = 200
@@ -276,14 +294,76 @@ class PicnicBasket1Strategy(TradingStrategy):
                     orders.append(sell_order_djembe)
         return orders
 
+class JamStrategy(TradingStrategy):
+    def __init__(self, product, position_limit=POSITION_LIMIT, window=10, spread_min=2, volume=3):
+        super().__init__(product, position_limit)
+        self.window = window
+        self.spread_min = spread_min
+        self.volume = volume
+
+    def generate_orders(self, market_data, current_position, timestamp):
+        orders = []
+        self.update_price_history(market_data.mid_price)
+
+        if len(self.price_history) < self.window or market_data.mid_price is None:
+            return orders
+
+        anchor = int(np.median(self.price_history[-self.window:]))
+        spread = market_data.spread if market_data.spread and market_data.spread >= self.spread_min else self.spread_min
+
+        buy_price = anchor - spread // 2
+        sell_price = anchor + spread // 2
+
+        buy_order = self.create_buy_order(buy_price, market_data, current_position, self.volume)
+        if buy_order:
+            orders.append(buy_order)
+
+        sell_order = self.create_sell_order(sell_price, market_data, current_position, self.volume)
+        if sell_order:
+            orders.append(sell_order)
+
+        return orders
+
+
+class CroissantStrategy(TradingStrategy):
+    def __init__(self, product, position_limit=POSITION_LIMIT, window=10, spread_min=2, volume=3):
+        super().__init__(product, position_limit)
+        self.window = window
+        self.spread_min = spread_min
+        self.volume = volume
+
+    def generate_orders(self, market_data, current_position, timestamp):
+        orders = []
+        self.update_price_history(market_data.mid_price)
+
+        if len(self.price_history) < self.window or market_data.mid_price is None:
+            return orders
+
+        anchor = int(np.median(self.price_history[-self.window:]))
+        spread = market_data.spread if market_data.spread and market_data.spread >= self.spread_min else self.spread_min
+
+        buy_price = anchor - spread // 2
+        sell_price = anchor + spread // 2
+
+        buy_order = self.create_buy_order(buy_price, market_data, current_position, self.volume)
+        if buy_order:
+            orders.append(buy_order)
+
+        sell_order = self.create_sell_order(sell_price, market_data, current_position, self.volume)
+        if sell_order:
+            orders.append(sell_order)
+
+        return orders
 
 class Trader:
     def __init__(self):
-        # Initialize strategies for each product
         self.r1_strategies: dict[str, TradingStrategy] = {
             "RAINFOREST_RESIN": ResinStrategy("RAINFOREST_RESIN"),
             "SQUID_INK": SquidInkStrategy("SQUID_INK"),
             "KELP": KelpStrategy("KELP"),
+            "CROISSANTS": CroissantStrategy("CROISSANTS",position_limit=250),
+            "JAMS": JamStrategy("JAMS",position_limit=350),
+            # "DJEMBE": strategy removed
         }
         self.r2_strategies: dict[str, TradingStrategy] = {
             "PICNIC_BASKET1": PicnicBasket1Strategy("PICNIC_BASKET1"),
@@ -297,26 +377,15 @@ class Trader:
             if product in self.r1_strategies:
                 order_depth = state.order_depths[product]
                 current_position = state.position.get(product, 0)
-
-                # Create market data object with all calculations done once
                 market_data = MarketData(order_depth)
-
-                # Update strategy with new price
                 self.r1_strategies[product].update_price_history(market_data.mid_price)
-
-                # Generate orders using the appropriate strategy
-                orders = self.r1_strategies[product].generate_orders(
-                    market_data, current_position, state.timestamp
-                )
+                orders = self.r1_strategies[product].generate_orders(market_data, current_position, state.timestamp)
                 result[product] = orders
             elif product in self.r2_strategies:
                 order_depth = state.order_depths[product]
                 current_position = state.position.get(product, 0)
-
-                # Generate orders using the appropriate strategy
-                orders = self.r2_strategies[product].generate_orders(
-                    market_data, current_position, state.timestamp, state=state
-                )
+                market_data = MarketData(order_depth)
+                orders = self.r2_strategies[product].generate_orders(market_data, current_position, state.timestamp, state=state)
                 result[product] = orders
 
         return result, conversions, ""
