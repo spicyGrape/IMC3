@@ -590,6 +590,66 @@ class PicnicBasket2Strategy(TradingStrategy):
                     orders.append(sell_order_jams)
         return orders
 
+class JamStrategy(TradingStrategy):
+    def __init__(self, product, position_limit=POSITION_LIMIT, window=10, spread_min=2, volume=3):
+        super().__init__(product, position_limit)
+        self.window = window
+        self.spread_min = spread_min
+        self.volume = volume
+
+    def generate_orders(self, market_data, current_position, timestamp):
+        orders = []
+        self.update_price_history(market_data.mid_price)
+
+        if len(self.price_history) < self.window or market_data.mid_price is None:
+            return orders
+
+        anchor = int(np.median(self.price_history[-self.window:]))
+        spread = market_data.spread if market_data.spread and market_data.spread >= self.spread_min else self.spread_min
+
+        buy_price = anchor - spread // 2
+        sell_price = anchor + spread // 2
+
+        buy_order = self.create_buy_order(buy_price, market_data, current_position, self.volume)
+        if buy_order:
+            orders.append(buy_order)
+
+        sell_order = self.create_sell_order(sell_price, market_data, current_position, self.volume)
+        if sell_order:
+            orders.append(sell_order)
+
+        return orders
+
+
+class CroissantStrategy(TradingStrategy):
+    def __init__(self, product, position_limit=POSITION_LIMIT, window=10, spread_min=2, volume=3):
+        super().__init__(product, position_limit)
+        self.window = window
+        self.spread_min = spread_min
+        self.volume = volume
+
+    def generate_orders(self, market_data, current_position, timestamp):
+        orders = []
+        self.update_price_history(market_data.mid_price)
+
+        if len(self.price_history) < self.window or market_data.mid_price is None:
+            return orders
+
+        anchor = int(np.median(self.price_history[-self.window:]))
+        spread = market_data.spread if market_data.spread and market_data.spread >= self.spread_min else self.spread_min
+
+        buy_price = anchor - spread // 2
+        sell_price = anchor + spread // 2
+
+        buy_order = self.create_buy_order(buy_price, market_data, current_position, self.volume)
+        if buy_order:
+            orders.append(buy_order)
+
+        sell_order = self.create_sell_order(sell_price, market_data, current_position, self.volume)
+        if sell_order:
+            orders.append(sell_order)
+
+        return orders
 
 class Trader:
     def __init__(self):
@@ -598,6 +658,9 @@ class Trader:
             "RAINFOREST_RESIN": ResinStrategy("RAINFOREST_RESIN"),
             "SQUID_INK": SquidInkStrategy("SQUID_INK"),
             "KELP": KelpStrategy("KELP"),
+            "CROISSANTS": CroissantStrategy("CROISSANTS"),
+            "JAMS": JamStrategy("JAMS"),
+            # "DJEMBE": strategy removed
         }
         self.r2_strategies: dict[str, TradingStrategy] = {
             "PICNIC_BASKET1": PicnicBasket1Strategy("PICNIC_BASKET1"),
