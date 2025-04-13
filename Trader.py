@@ -658,8 +658,8 @@ class Trader:
             "RAINFOREST_RESIN": ResinStrategy("RAINFOREST_RESIN"),
             "SQUID_INK": SquidInkStrategy("SQUID_INK"),
             "KELP": KelpStrategy("KELP"),
-            "CROISSANTS": CroissantStrategy("CROISSANTS"),
-            "JAMS": JamStrategy("JAMS"),
+            "CROISSANTS": CroissantStrategy("CROISSANTS",position_limit=250),
+            "JAMS": JamStrategy("JAMS",position_limit=350),
             # "DJEMBE": strategy removed
         }
         self.r2_strategies: dict[str, TradingStrategy] = {
